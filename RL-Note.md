@@ -263,7 +263,7 @@ $$
 注意力权重通过查询和键的内积计算：
 
 $$
-\alpha_{ij} = \text{softmax}\!\left(\frac{\mathbf{q}_i \cdot \mathbf{k}_j}{\sqrt{d_k}}\right)
+\alpha_{ij} = \text{Softmax}\!\left(\frac{\mathbf{q}_i \cdot \mathbf{k}_j}{\sqrt{d_k}}\right)
 $$
 
 最终输出是值向量的加权和：
@@ -275,7 +275,7 @@ $$
 矩阵形式（整个序列同时计算）：
 
 $$
-\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^T}{\sqrt{d_k}}\right) \mathbf{V}
+\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{Softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^T}{\sqrt{d_k}}\right) \mathbf{V}
 $$
 
 **注意力机制中的 Softmax**：此处 Softmax 的作用是将内积相似度分数转换为归一化的注意力权重（概率分布），确保每个 token 的注意力权重之和为 1。这和前馈网络输出层的 Softmax 用途不同——前者用于**信息路由**，后者用于**预测输出**。
@@ -485,7 +485,7 @@ graph TB
     subgraph "MLP 正向传播"
         M1["输入 x"] --> M2["第1层: h₁ = σ(W₁x + b₁)"]
         M2 --> M3["第2层: h₂ = σ(W₂h₁ + b₂)"]
-        M3 --> M4["输出: ŷ = softmax(W₃h₂ + b₃)"]
+        M3 --> M4["输出: ŷ = Softmax(W₃h₂ + b₃)"]
     end
   
     subgraph "CNN 正向传播"
@@ -707,7 +707,7 @@ $$
 将两步组合，就得到了 Softmax：
 
 $$
-\text{softmax}(z_i) = p_i = \frac{e^{z_i}}{\sum_{j=1}^{K} e^{z_j}}, \quad i = 1, 2, \dots, K
+\text{Softmax}(z_i) = p_i = \frac{e^{z_i}}{\sum_{j=1}^{K} e^{z_j}}, \quad i = 1, 2, \dots, K
 $$
 
 ### 3.2.2 Softmax 的性质验证
@@ -1339,7 +1339,7 @@ $$
 a⁽⁰⁾ ← x
 for l = 1 to L do
     z⁽ˡ⁾ ← W⁽ˡ⁾ · a⁽ˡ⁻¹⁾ + b⁽ˡ⁾
-    a⁽ˡ⁾ ← σ(z⁽ˡ⁾)          // 最后一层用softmax
+    a⁽ˡ⁾ ← σ(z⁽ˡ⁾)          // 最后一层用Softmax
 end for
 
 /* === 计算损失 === */
@@ -1420,14 +1420,14 @@ return {∂L/∂W⁽ˡ⁾, ∂L/∂b⁽ˡ⁾}_{l=1}^{L}
 ```mermaid
 graph TB
     subgraph "监督学习训练流程"
-        SL1["输入 x"] -->|"前向传播"| SL2["预测 ŷ = softmax(...)"]
+        SL1["输入 x"] -->|"前向传播"| SL2["预测 ŷ = Softmax(...)"]
         SL3["标签 y<br/>（人工标注的标准答案）"] --> SL4["损失 = 交叉熵(ŷ, y)<br/>衡量'离正确答案有多远'"]
         SL2 --> SL4
         SL4 -->|"反向传播起点: p-y"| SL5["更新权重：让 ŷ 更接近 y"]
     end
   
     subgraph "强化学习训练流程"
-        RL1["状态 s"] -->|"前向传播"| RL2["动作概率 π(a|s) = softmax(...)"]
+        RL1["状态 s"] -->|"前向传播"| RL2["动作概率 π(a|s) = Softmax(...)"]
         RL2 --> RL3["采样执行动作 a"]
         RL3 --> RL4["环境返回奖励 r"]
         RL4 -->|"反向传播起点: ∇logπ·R"| RL5["更新权重：让高奖励动作概率↑"]
@@ -1470,7 +1470,7 @@ $$
 **策略网络的具体实现**：使用神经网络参数化策略，输出层用 Softmax 将状态特征映射为动作概率分布：
 
 $$
-\pi_{\boldsymbol{\theta}}(a|s) = \text{softmax}(f_{\boldsymbol{\theta}}(s))_a = \frac{e^{f_{\boldsymbol{\theta}}(s)_a}}{\sum_{a'} e^{f_{\boldsymbol{\theta}}(s)_{a'}}}
+\pi_{\boldsymbol{\theta}}(a|s) = \text{Softmax}(f_{\boldsymbol{\theta}}(s))_a = \frac{e^{f_{\boldsymbol{\theta}}(s)_a}}{\sum_{a'} e^{f_{\boldsymbol{\theta}}(s)_{a'}}}
 $$
 
 **注意**：这里的 Softmax 和监督学习分类网络的 Softmax 在数学上完全相同，但**含义不同**——分类网络输出"属于第 $i$ 类的概率"，策略网络输出"在当前状态下选择动作 $a$ 的概率"。
@@ -1782,11 +1782,11 @@ $$
 注意力机制的向量空间解释：
 
 $$
-\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^T}{\sqrt{d_k}}\right) \mathbf{V}
+\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{Softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^T}{\sqrt{d_k}}\right) \mathbf{V}
 $$
 
 - $\mathbf{Q}\mathbf{K}^T$ ：计算查询向量与所有键向量的内积——在高维空间中测量方向相似度
-- $\text{softmax}(\cdot/\sqrt{d_k})$ ：将相似度分数转换为概率权重
+- $\text{Softmax}(\cdot/\sqrt{d_k})$ ：将相似度分数转换为概率权重
 - 乘以 $\mathbf{V}$ ：以注意力权重对值向量进行加权平均
 
 几何直觉：注意力机制让每个 token 在向量空间中，根据与其他 token 的相似度，动态地"移动"到新的位置——这个新位置是所有值向量的加权组合。
