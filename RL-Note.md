@@ -1227,9 +1227,13 @@ $$
 J(\boldsymbol{\theta}) = \mathbb{E}_{\pi_\theta}\left[\sum_t \gamma^t R_t\right]
 $$
 
-这不是在衡量"预测与标签的差距"，而是在衡量"当前策略能获得多少累积奖励"。优化方向也不同——不是最小化损失，而是**最大化**目标函数。这也解释了为什么最大似然估计的框架不能直接套用到强化学习——RL 中没有"正确答案"的概率需要最大化，只有"好结果"的期望需要优化。
+> **记号约定**：从本节开始，策略参数向量有时严格写作 $\boldsymbol{\theta}$，有时为书写简洁记作 $\theta$；两者表示同一组策略参数，并不代表不同对象。因此文中的 $\pi_\theta \equiv \pi_{\boldsymbol{\theta}}$、$J(\theta) \equiv J(\boldsymbol{\theta})$、$r_t(\theta) \equiv r_t(\boldsymbol{\theta})$ 都只是同一记号体系下的简写与全写之分。
 
-具体的梯度计算留待第五章（强化学习视角）详细推导。
+这不是在衡量"预测与标签的差距"，而是在衡量"当前策略能获得多少累积奖励"。优化方向也不同——不是最小化损失，而是**最大化**目标函数。
+
+更精确地说：**传统监督学习中“给定标签做最大似然估计”的框架，不能直接无改造地推出标准强化学习的 expected-return 目标。** RL 中没有固定标签可供对数似然最大化，优化对象是策略与环境交互后产生的**轨迹回报期望**。但这并不意味着 RL 与似然观点毫无关系——在 **control as inference / maximum entropy RL / variational RL** 的视角下，RL 又可以被重写为概率推断或变分优化问题，并与 likelihood / ELBO 发生紧密联系。
+
+因此，更准确的边界是：**传统标签驱动的 MLE 不能直接等同于标准 RL 目标；但经过概率建模重构后，RL 可以与推断/似然目标建立严格联系。** 具体的策略梯度推导与这种联系的数学细节留待第五章（强化学习视角）详细展开。
 
 > **过渡说明**：有了概率输出和损失函数后，下一章讨论如何利用梯度信息高效地修正参数——即优化算法和反向传播机制。这些工具是所有架构共享的底层基础设施。
 
@@ -2819,7 +2823,7 @@ $$
 \hat{A}_t = \sum_{l=0}^{\infty} (\gamma\lambda)^l \delta_{t+l} = \delta_t + \gamma\lambda \sum_{l=0}^{\infty} (\gamma\lambda)^l \delta_{t+1+l} = \delta_t + \gamma\lambda \hat{A}_{t+1}
 $$
 
-**边界条件**：在轨迹终点 $T$，$\hat{A}_T = \delta_T$（没有后续帧）。如果是回合结束（终止状态），$V(s_{T+1}) = 0$；如果是时间截断（非终止），$V(s_{T+1})$ 使用当前价值估计（称为 bootstrap value）。
+**边界条件**：在轨迹终点 $T$，$\hat{A}_T = \delta_T$（没有后续帧）。如果是回合结束（终止状态），$V(s_{T+1}) = 0$；如果是时间截断（非终止），$V(s_{T+1})$ 使用 **rollout 阶段当前 Actor 持有的价值估计** 作为 bootstrap value。这里的“当前”指采样该段轨迹时 Actor 端持有的价值网络，而不是后续 Learner 多个 epoch 中正在被更新的 $V_\mathbf{w}$。
 
 **计算方向**：从轨迹的**最后一帧向前**遍历，逐帧递推计算 $\hat{A}_t$。这就是为什么实际代码中总是看到 `for i in reversed(range(T))` 这样的逆序循环。
 
@@ -2828,10 +2832,14 @@ $$
 有了 GAE 优势后，价值网络的训练目标（TD($\lambda$) 回报）自然得到：
 
 $$
-R_t^{\lambda} = \hat{A}_t^{\text{GAE}} + V(s_t)
+R_t^{\lambda,\text{old}} = \hat{A}_t^{\text{GAE, old}} + V_{\mathbf{w}_{\text{old}}}(s_t)
 $$
 
-**含义**：这是对 $V(s_t)$ 应有的真实值的一个估计。价值网络通过最小化 $(V_\mathbf{w}(s_t) - R_t^{\lambda})^2$ 来更新参数，逐步让自己的估计 $V_\mathbf{w}(s_t)$ 逼近 $R_t^{\lambda}$。
+其中下标 `old` 表示：$\hat{A}_t^{\text{GAE, old}}$ 和 $V_{\mathbf{w}_{\text{old}}}(s_t)$ 都是在 **rollout 采样阶段** 用旧价值函数 $V_{\mathbf{w}_{\text{old}}}$ 计算得到的。进入 PPO 的多轮 epoch 更新后，$R_t^{\lambda,\text{old}}$ 被当作**固定监督目标**（frozen target），而不是随着当前价值网络 $V_{\mathbf{w}}$ 的更新而同步变化。
+
+**含义**：这是对 $V(s_t)$ 应有真实值的一个近似估计。价值网络通过最小化 $(V_\mathbf{w}(s_t) - R_t^{\lambda,\text{old}})^2$ 来更新参数，逐步让当前估计 $V_\mathbf{w}(s_t)$ 逼近 rollout 阶段预先算好的目标值。
+
+> ⚠️ **为什么必须强调 old / frozen**：如果把上式中的 $V(s_t)$ 误解为“当前正在训练的 $V_\mathbf{w}(s_t)$”，那么 target 会随着参数更新一起变化，形成 moving target。PPO 的标准做法恰恰相反——先用旧策略和旧价值函数把 $\hat{A}_t^{\text{old}}$ 与 $R_t^{\lambda,\text{old}}$ 整批算好并存入 buffer，然后在后续多个 epoch 中将它们视为常数使用。这也是工程实现里常见 `old_vpred`、`returns.detach()` 等写法的数学来源。
 
 #### $\lambda$ 参数的直觉与选择
 
@@ -3058,25 +3066,29 @@ $$
 
 #### 价值损失与裁剪
 
-价值网络的训练目标是让 $V_\mathbf{w}(s)$ 逼近 TD($\lambda$) 回报 $R_t^\lambda$（5.3.2 节定义）。标准形式为均方误差（Schulman 2017 PPO 原论文 Eq.9 形式）：
+价值网络的训练目标是让 $V_\mathbf{w}(s)$ 逼近 TD($\lambda$) 回报 $R_t^{\lambda,\text{old}}$（5.3.2 节定义，rollout 阶段预先计算并冻结）。标准形式为均方误差（Schulman 2017 PPO 原论文 Eq.9 形式）：
 
 $$
-L_{\text{value}} = \frac{1}{2}\hat{\mathbb{E}}_t\left[(V_\mathbf{w}(s_t) - R_t^\lambda)^2\right]
+L_{\text{value}} = \frac{1}{2}\hat{\mathbb{E}}_t\left[(V_\mathbf{w}(s_t) - \operatorname{sg}(R_t^{\lambda,\text{old}}))^2\right]
 $$
+
+其中 $\operatorname{sg}(\cdot)$ 表示 **stop-gradient / detach**——强调 $R_t^{\lambda,\text{old}}$ 在 PPO 多个 epoch 中被视为常数监督信号，不参与当前参数的反向传播。很多论文正文会省略这一记号，但在教程和工程实现中写出来更不容易误导读者。
 
 > **关于 $\frac{1}{2}$ 系数的说明**：$\frac{1}{2}$ 使得对 $V_\mathbf{w}$ 求导后系数恰好抵消（$\nabla L = (V-R)\nabla V$ 而非 $2(V-R)\nabla V$），梯度表达式更简洁。PPO 原论文采用此写法。在工程实现中，$\frac{1}{2}$ 可被价值损失系数 $c_v$ 或学习率隐式吸收——例如 PyTorch 的 `F.mse_loss` 不含 $\frac{1}{2}$，但通过调节 $c_v$ 可达到等效效果。
 
 与策略损失类似，PPO 也对价值函数施加裁剪以防止价值估计跳变过大：
+
+其中 $V_{\text{old}}(s_t) \equiv V_{\mathbf{w}_{\text{old}}}(s_t)$ 是 rollout 阶段旧价值网络对 $s_t$ 的估计值（与 $R_t^{\lambda,\text{old}}$ 一样在多个 epoch 中作为常数使用）：
 
 $$
 V_{\text{clipped}} = V_{\text{old}}(s_t) + \text{clip}\left(V_\mathbf{w}(s_t) - V_{\text{old}}(s_t), \; -\epsilon, \; +\epsilon\right)
 $$
 
 $$
-L_{\text{value}}^{\text{CLIP}} = \hat{\mathbb{E}}_t\left[\max\left((V_\mathbf{w}(s_t) - R_t^\lambda)^2, \; (V_{\text{clipped}} - R_t^\lambda)^2\right)\right]
+L_{\text{value}}^{\text{CLIP}} = \hat{\mathbb{E}}_t\left[\max\left((V_\mathbf{w}(s_t) - \operatorname{sg}(R_t^{\lambda,\text{old}}))^2, \; (V_{\text{clipped}} - \operatorname{sg}(R_t^{\lambda,\text{old}}))^2\right)\right]
 $$
 
-**为什么裁剪价值函数**：价值估计是 GAE 计算的基础（$\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)$）。如果 $V$ 在单次更新中跳变过大，下一轮 GAE 计算的优势值会剧烈波动，进而导致策略更新不稳定。裁剪将 $V$ 的变化限制在旧值 $\pm\epsilon$ 范围内，保证了训练过程中优势估计的平稳性。
+**为什么裁剪价值函数**：价值估计是下一轮 GAE 计算的基础（rollout 阶段会用旧价值函数形成 $\delta_t^{\text{old}} = r_t + \gamma V_{\mathbf{w}_{\text{old}}}(s_{t+1}) - V_{\mathbf{w}_{\text{old}}}(s_t)$）。如果当前训练中的 $V_\mathbf{w}$ 在单次更新中跳变过大，那么下一次采样时得到的优势值可能剧烈波动，进而导致策略更新不稳定。裁剪将 $V$ 的变化限制在旧值 $\pm\epsilon$ 范围内，保证训练过程中 value target 的演化更平滑。
 
 > ⚠️ **现代研究的质疑**：价值函数裁剪（Value Clipping）是早期 OpenAI Baselines 代码引入的工程技巧，但现代 RL 社区已对其有效性提出严重质疑。Andrychowicz 等人在 2021 年的大规模消融实验论文《What Matters In On-Policy Reinforcement Learning》中证明：**价值函数裁剪在大多数任务上对性能没有显著帮助，甚至在某些任务上会损害性能。** 原因在于：价值网络的核心目标是尽可能快地逼近真实的 TD($\lambda$) Return，限制其更新步长会让优势估计（GAE）更长时间处于高偏差状态，反而拖慢了价值函数的收敛速度。当前主流的极简实现（如 CleanRL 的参考实现）倾向于直接计算纯净的 MSE 或 Huber Loss，去掉多余的 Value Clip。本项目保留了 Value Clipping 作为保守选择——在你的具体任务中是否有益，建议通过消融实验（启用 vs 禁用 Value Clip）来验证。
 
@@ -3151,10 +3163,18 @@ $$
 **引理（Performance Difference Lemma）**：对任意两个策略 $\pi_{\text{new}}$ 和 $\pi_{\text{old}}$，有：
 
 $$
-J(\pi_{\text{new}}) - J(\pi_{\text{old}}) = \frac{1}{1-\gamma} \mathbb{E}_{s \sim d^{\pi_{\text{new}}}}\!\left[\sum_a \pi_{\text{new}}(a|s) A^{\pi_{\text{old}}}(s,a)\right]
+J(\pi_{\text{new}}) - J(\pi_{\text{old}}) = \sum_s d^{\pi_{\text{new}}}(s) \sum_a \pi_{\text{new}}(a|s) A^{\pi_{\text{old}}}(s,a)
 $$
 
-其中 $d^{\pi_{\text{new}}}(s) = \sum_{t=0}^\infty \gamma^t P(S_t = s | \pi_{\text{new}})$ 是新策略下的**折扣状态访问频率**（discounted state visitation frequency / discounted occupancy measure，与 5.3.3 节定义一致，未归一化）。$\frac{1}{1-\gamma}$ 的出现是因为 $d^{\pi_{\text{new}}}$ 各状态求和为 $\frac{1}{1-\gamma}$，与期望中的分布归一化相消后恰好产生此因子。
+其中 $d^{\pi_{\text{new}}}(s) = \sum_{t=0}^\infty \gamma^t P(S_t = s | \pi_{\text{new}})$ 是新策略下的**未归一化折扣状态访问频率**（discounted state visitation frequency，与 5.3.3 节定义一致）。由于 $\sum_s d^{\pi_{\text{new}}}(s) = \frac{1}{1-\gamma}$，它**不是**严格的概率分布，因此这里更严谨的写法是对状态做加权求和，而不是直接写成 $\mathbb{E}_{s\sim d^{\pi_{\text{new}}}}[\cdot]$。
+
+若引入归一化版本 $\bar d^{\pi_{\text{new}}}(s) = (1-\gamma)d^{\pi_{\text{new}}}(s)$，则也可等价写成：
+
+$$
+J(\pi_{\text{new}}) - J(\pi_{\text{old}}) = \frac{1}{1-\gamma} \mathbb{E}_{s \sim \bar d^{\pi_{\text{new}}}}\!\left[\sum_a \pi_{\text{new}}(a|s) A^{\pi_{\text{old}}}(s,a)\right]
+$$
+
+这两种写法是完全等价的，只是前者把未归一化测度显式写出来，后者把归一化常数提取到了期望号外面。
 
 **推论（策略改进条件）**：若对所有状态 $s$ 有 $\sum_a \pi_{\text{new}}(a|s) A^{\pi_{\text{old}}}(s,a) \geq 0$（即新策略在旧策略的每个状态上都不比旧策略差），则由上式直接得到：
 
@@ -3418,13 +3438,22 @@ Hessian 是二阶偏导数组成的 $d \times d$ 对称矩阵。如果说梯度 
 >
 >      等价地取对数：$\log p_A(a) = \log p_U(u) - \log\left|\det \frac{\partial a}{\partial u}\right|$。
 >
->      对 $a = \tanh(u)$ 的逐维变换，雅可比矩阵是对角阵，行列式等于各维导数之积，因此：
+      对 $a = \tanh(u)$ 的逐维变换，雅可比矩阵是对角阵，行列式等于各维导数之积，因此：
 >
 >      $\log\pi(a|s) = \log\mathcal{N}(u|\mu,\sigma^2) - \sum_{i=1}^{d}\log(1 - \tanh^2(u_i))$
 >
 >      其中 $u$ 是 Tanh 之前的值。如果漏掉雅可比修正项，得到的 $\log$-概率将不再对应目标动作分布的正确对数密度，从而引入系统性偏差，策略梯度估计将显著失准，训练通常会不稳定甚至发散。
+>
+>      **数值稳定性警告**：上式在数学上正确，但若在代码中直接写成 `torch.log(1 - torch.tanh(u).pow(2))`，当 $u$ 的绝对值较大时，`tanh(u)` 会在浮点数中饱和到接近 $\pm 1$，此时 $1-\tanh^2(u)$ 可能发生严重的数值消减，进而出现 `log(0)`、`-inf` 甚至后续梯度中的 `NaN`。因此工程实现通常会使用**数值稳定的等价重写**或显式的稳定项保护。
+>
+>      一种常见的稳定恒等式是：
+>
+>      $$
+>      \log(1-\tanh^2(u)) = 2\bigl(\log 2 - u - \operatorname{softplus}(-2u)\bigr)
+>      $$
+>
+>      因而 Jacobian 修正项可以用 `softplus` 形式稳定计算。另一类常见实现则在 $1-a^2$ 上加入一个很小的 $\epsilon$ 或对动作值做 `clamp`，例如计算 $\log(1-a^2+\epsilon)$。两类做法都广泛存在于主流实现中：前者在数学上更“干净”，后者实现更直接。**关键不是唯一采用哪一种，而是不能忽略数值稳定性问题。**
 >    - **硬截断（PPO 的通常做法）**：PPO 为了**规避**上述复杂的数学修正，通常选择不使用 Tanh，而是在网络输出高斯动作后，直接在环境交互时做粗暴的 `clip(action, -1, 1)` 截断。虽然这在数学上次优（截断后的分布不再是精确的高斯），但工程上极其稳定且简单，是 PPO 连续控制实现的主流方案。
-
 ### 6.3.2 大语言模型的 RLHF 对齐
 
 - 状态：对话上下文（token 序列的嵌入表示）
@@ -4822,13 +4851,15 @@ $$
 
 这是 KL 散度的二阶泰勒近似（Schulman, 2020），当 $r_t \approx 1$ 时非常准确。
 
-**等价的工程实现形式**：在主流高性能 RL 库（CleanRL、Stable-Baselines3）的底层源码中，往往使用一个泰勒展开下等价且计算更稳定的无偏估计形式：
+**备选的二阶近似形式**：在部分 RL 实现中，也可以看到另一种泰勒展开下的近似：
 
 $$
-\hat{D}_{\text{KL}} \approx \frac{1}{2} \hat{\mathbb{E}}_t\!\left[(\log r_t(\theta))^2\right]
+\hat{D}_{\text{KL}}^{\text{(2nd)}} \approx \frac{1}{2} \hat{\mathbb{E}}_t\!\left[(\log r_t(\theta))^2\right]
 $$
 
-即 `0.5 * (log_prob_new - log_prob_old).pow(2).mean()`。两者在 $r_t \approx 1$ 的邻域内通过泰勒展开可以验证等价性：$\log r \approx (r-1)$ 时，$(r-1) - \log r \approx \frac{1}{2}(\log r)^2$。平方项在深度学习框架中的自动微分和数值稳定性上略有优势。两个公式均可使用，上述公式可作为备选的工程实现方案。
+即 `0.5 * (log_prob_new - log_prob_old).pow(2).mean()`。两者在 $r_t \approx 1$ 的邻域内通过泰勒展开可以验证近似等价性：$\log r \approx (r-1)$ 时，$(r-1) - \log r \approx \frac{1}{2}(\log r)^2$。
+
+> ⚠️ **两个估计器的性质区别**：上面的 $(r_t-1)-\log r_t$ 是 KL 散度的**一阶无偏估计**（它恰好等于 $D_{\text{KL}}(\pi_{\text{old}}\|\pi_\theta)$ 在单样本下的无偏蒙特卡洛估计器）。而 $\frac{1}{2}(\log r_t)^2$ 是**二阶近似量**——它在 $r_t\approx 1$ 时与前者数值接近，但**不是**无偏估计器（因为 $\mathbb{E}[(\log r)^2] \neq D_{\text{KL}}$ 一般不严格成立）。两个公式在实际 PPO 的 early-stopping 判断中都可使用（因为只需要一个合理的 KL 监控量，不要求精确值），但在数学性质上不应混淆。CleanRL 的参考实现使用的是第一种（$(r-1)-\log r$），Stable-Baselines3 也采用类似形式。
 
 **工程伪代码**：
 
@@ -4980,7 +5011,7 @@ class RolloutBuffer:
 
 ```python
 # TMax 分批的核心逻辑
-TMAX = 32  # 每个训练批次的最大时间步数（本项目实际值，6.4秒/批）
+TMAX = 32  # 每个环境实例的轨迹片段长度（5 FPS 时单环境收集 32 步约需 6.4 秒）
 
 # Actor 端: 每收集 TMAX 步就发送一次数据
 if step_count >= TMAX:
@@ -5014,10 +5045,36 @@ Actor N ──→ 收集 32 步 ──→ ┘
 **吞吐量计算**：
 
 - 每个 Actor 运行 $M$ 个游戏实例（如 $M=8$），每个实例 5 FPS
-- 单 Actor 吞吐量：$8 \times 5 = 40$ 帧/秒
-- $N$ 个 Actor 总吞吐量：$40N$ 帧/秒
-- TMax=32 步需要 $32 / 40 = 0.8$ 秒 收集一批（每个 Agent），8 个 Agent 并行则 $32 \times 8 = 256$ 样本/批
-- Learner 需要在 $\sim 1$ 秒内完成 $K$ 个 epoch 的训练，否则成为瓶颈
+- 单 Actor 的**总吞吐量**：$8 \times 5 = 40$ steps/s
+- $N$ 个 Actor 的**总系统吞吐量**：$40N$ steps/s
+
+但要特别注意：**TMax=32 的含义是“每个环境实例的轨迹片段长度是 32 个连续时间步”**，而不是“全局凑够 32 条 transition 就算一批”。因此对于单个环境实例：
+
+$$
+\text{收集 32 步所需时间} = \frac{32}{5} = 6.4\text{ s}
+$$
+
+由于一个 Actor 内有 8 个环境并行推进，它们会在大约同样的物理时间内各自产生 32 步数据，因此**单个 Actor 一次 flush 给 Learner 的样本量**是：
+
+$$
+8 \times 32 = 256 \text{ samples}
+$$
+
+这与单 Actor 的总吞吐量完全一致：
+
+$$
+\frac{256}{6.4} = 40 \text{ steps/s}
+$$
+
+若有 $N$ 个 Actor：
+
+- **同步近似下**：Learner 大约每 $6.4$ 秒会收到一轮总计 $256N$ 条样本的大批次
+- **异步队列下**：系统更准确的描述不是“每 0.8 秒来一批”，而是**以约 $40N$ steps/s 的速率持续到数**，每个 Actor 独立地每隔约 $6.4$ 秒形成一个 256 样本的局部 batch 送入队列
+
+因此，Learner 是否成为瓶颈，不应简单表述为“必须在 $\sim 1$ 秒内训练完”，而应根据**数据到达策略**来判断：
+
+- 若 Learner 按 **Actor flush 的局部 batch** 为单位消费，则它至少应能在下一次同一 Actor flush 到来前处理完约 256 样本（时间尺度约 6.4 秒）
+- 若 Learner 先聚合多个 Actor 的数据再训练，则应满足其**平均训练吞吐**不低于系统的数据产生速率 $40N$ steps/s，否则队列会持续堆积并最终形成瓶颈
 
 **Learner 端的内存峰值**：
 
