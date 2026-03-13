@@ -98,8 +98,10 @@ $$
 | -------- | --------------- | -------------------- | ------------------ | ------------- |
 | Sigmoid  | $(0,1)$       | 概率解释直观         | 梯度消失、非零中心 | 二分类输出层  |
 | Tanh     | $(-1,1)$      | 零中心输出           | 梯度消失           | RNN隐藏层     |
-| ReLU     | $[0,+\infty)$ | 计算快、缓解梯度消失 | 神经元死亡问题     | CNN/DNN隐藏层 |
+| ReLU     | $[0,+\infty)$ | 计算快、缓解梯度消失 | 神经元死亡问题（$z<0$ 区域梯度恒为 0，一旦进入便永远无法恢复）     | CNN/DNN隐藏层 |
 | LeakyReLU | $(-\infty,+\infty)$ | 解决神经元死亡（负区间保留小斜率 $\alpha z$，$\alpha$ 通常取 0.01） | 引入额外超参 $\alpha$ | RL动作头MLP（本项目使用） |
+
+> **ReLU 死亡神经元与 RL 的关联**：在强化学习中，由于策略更新可能比监督学习更加剧烈（尤其是训练初期奖励信号高度不稳定），ReLU 的死亡神经元问题更容易触发。这也是 PPO 强调"每次只做微小更新"（clip 机制）的工程动因之一——过大的梯度更新可能导致大量 ReLU 神经元永久失活，从而降低网络的有效容量。本项目使用 LeakyReLU 来规避此风险。
 
 ### 1.1.4 单神经元的几何意义
 
@@ -2804,8 +2806,10 @@ $$
 将 $\hat{A}_t^{(n)} = \sum_{k=0}^{n-1} \gamma^k \delta_{t+k}$ 代入上式，交换求和顺序后可以证明：
 
 $$
-\hat{A}_t^{\text{GAE}(\gamma,\lambda)} = \sum_{l=0}^{\infty} (\gamma\lambda)^l \delta_{t+l}
+\hat{A}_t^{\text{GAE}(\gamma,\lambda)} = \sum_{l=0}^{T-t-1} (\gamma\lambda)^l \delta_{t+l}
 $$
+
+> **关于求和上限**：在 episodic 任务中，轨迹有有限长度 $T$，因此求和上限为 $T-t-1$（即从当前时刻 $t$ 到轨迹末尾的剩余步数）。在 continuing 任务（无终止状态）中可以形式上写成 $\infty$。由于 $(\gamma\lambda)^l$ 的指数衰减特性，远端项的权重极小，有限截断在实践中不会引入显著误差。工程代码中的 `for i in reversed(range(T))` 天然处理了有限边界。
 
 **证明思路**：$\delta_{t+l}$ 在 $\hat{A}_t^{(n)}$ 中出现当且仅当 $n \geq l+1$。对所有包含 $\delta_{t+l}$ 的项求和，系数为 $(1-\lambda) \sum_{n=l+1}^{\infty} \lambda^{n-1} \gamma^l = \gamma^l \lambda^l$（利用几何级数求和 $(1-\lambda)\lambda^l/(1-\lambda) = \lambda^l$）。因此每个 $\delta_{t+l}$ 的总权重恰好是 $(\gamma\lambda)^l$。
 
@@ -2820,7 +2824,7 @@ $$
 **推导**：
 
 $$
-\hat{A}_t = \sum_{l=0}^{\infty} (\gamma\lambda)^l \delta_{t+l} = \delta_t + \gamma\lambda \sum_{l=0}^{\infty} (\gamma\lambda)^l \delta_{t+1+l} = \delta_t + \gamma\lambda \hat{A}_{t+1}
+\hat{A}_t = \sum_{l=0}^{T-t-1} (\gamma\lambda)^l \delta_{t+l} = \delta_t + \gamma\lambda \sum_{l=0}^{T-t-2} (\gamma\lambda)^l \delta_{t+1+l} = \delta_t + \gamma\lambda \hat{A}_{t+1}
 $$
 
 **边界条件**：在轨迹终点 $T$，$\hat{A}_T = \delta_T$（没有后续帧）。如果是回合结束（终止状态），$V(s_{T+1}) = 0$；如果是时间截断（非终止），$V(s_{T+1})$ 使用 **rollout 阶段当前 Actor 持有的价值估计** 作为 bootstrap value。这里的“当前”指采样该段轨迹时 Actor 端持有的价值网络，而不是后续 Learner 多个 epoch 中正在被更新的 $V_\mathbf{w}$。
@@ -2865,7 +2869,7 @@ $$
 \nabla_{\boldsymbol{\theta}} J(\boldsymbol{\theta}) \propto \sum_{s} d^{\pi}(s) \sum_{a} \nabla_{\boldsymbol{\theta}} \pi_{\boldsymbol{\theta}}(a|s) \, Q^{\pi}(s,a)
 $$
 
-其中 $d^{\pi}(s)$ 是策略 $\pi$ 下的**折扣状态访问频率**（discounted state visitation frequency），定义为 $d^\pi(s) = \sum_{t=0}^{\infty} \gamma^t P(S_t=s|\pi)$（Sutton et al., 1999 原论文定义）。注意 $d^\pi(s)$ 在此定义下**不是**严格的概率分布（各状态求和为 $\frac{1}{1-\gamma}$ 而非 1），这正是上式使用正比符号 $\propto$ 而非等号的原因。如果引入归一化因子 $\bar{d}^\pi(s) = (1-\gamma)d^\pi(s)$ 使其成为严格的概率分布（称为**折扣状态访问分布**，也称 discounted occupancy measure），则定理可写为严格等式：$\nabla_\theta J(\theta) = \frac{1}{1-\gamma}\mathbb{E}_{s\sim \bar{d}^\pi, a\sim\pi}[\nabla_\theta\log\pi_\theta(a|s)Q^\pi(s,a)]$。在工程实现中，由于我们通过采样近似期望，这些常数因子不影响梯度方向（会被学习率吸收）。$Q^{\pi}(s,a)$ 是动作-状态价值函数。在 continuing（无终止状态）、undiscounted 且满足遍历性（ergodic）假设的设定下，文献中通常改用**平稳状态分布** $\mu^\pi(s)$ 来表述相应结果，而不是简单地将当前折扣访问频率公式中令 $\gamma=1$。
+其中 $d^{\pi}(s)$ 是策略 $\pi$ 下的**折扣状态访问频率**（discounted state visitation frequency），定义为 $d^\pi(s) = \sum_{t=0}^{\infty} \gamma^t P(S_t=s|S_0 \sim \rho_0, \pi)$（Sutton et al., 1999 原论文定义），其中 $\rho_0$ 是初始状态分布（与 5.2.2 节轨迹分布定义一致）。注意 $d^\pi(s)$ 在此定义下**不是**严格的概率分布（各状态求和为 $\frac{1}{1-\gamma}$ 而非 1），这正是上式使用正比符号 $\propto$ 而非等号的原因。如果引入归一化因子 $\bar{d}^\pi(s) = (1-\gamma)d^\pi(s)$ 使其成为严格的概率分布（称为**折扣状态访问分布**，也称 discounted occupancy measure），则定理可写为严格等式：$\nabla_\theta J(\theta) = \frac{1}{1-\gamma}\mathbb{E}_{s\sim \bar{d}^\pi, a\sim\pi}[\nabla_\theta\log\pi_\theta(a|s)Q^\pi(s,a)]$。在工程实现中，由于我们通过采样近似期望，这些常数因子不影响梯度方向（会被学习率吸收）。$Q^{\pi}(s,a)$ 是动作-状态价值函数。在 continuing（无终止状态）、undiscounted 且满足遍历性（ergodic）假设的设定下，文献中通常改用**平稳状态分布** $\mu^\pi(s)$ 来表述相应结果，而不是简单地将当前折扣访问频率公式中令 $\gamma=1$。
 
 **这个定理的核心伟大之处**：目标函数 $J(\boldsymbol{\theta})$ 对参数 $\boldsymbol{\theta}$ 的导数，**不依赖于状态分布 $d^\pi(s)$ 对参数 $\boldsymbol{\theta}$ 的导数**——尽管策略参数的变化会改变状态分布，但定理证明了我们不需要计算 $\nabla_\theta d^\pi(s)$（这在实际中几乎不可能计算，因为它涉及环境转移矩阵 $P(s'|s,a)$ 的导数）。正因为有了这个严格证明，我们才能安全地通过采样来估计梯度。
 
@@ -3166,7 +3170,7 @@ $$
 J(\pi_{\text{new}}) - J(\pi_{\text{old}}) = \sum_s d^{\pi_{\text{new}}}(s) \sum_a \pi_{\text{new}}(a|s) A^{\pi_{\text{old}}}(s,a)
 $$
 
-其中 $d^{\pi_{\text{new}}}(s) = \sum_{t=0}^\infty \gamma^t P(S_t = s | \pi_{\text{new}})$ 是新策略下的**未归一化折扣状态访问频率**（discounted state visitation frequency，与 5.3.3 节定义一致）。由于 $\sum_s d^{\pi_{\text{new}}}(s) = \frac{1}{1-\gamma}$，它**不是**严格的概率分布，因此这里更严谨的写法是对状态做加权求和，而不是直接写成 $\mathbb{E}_{s\sim d^{\pi_{\text{new}}}}[\cdot]$。
+其中 $d^{\pi_{\text{new}}}(s) = \sum_{t=0}^\infty \gamma^t P(S_t = s | S_0 \sim \rho_0, \pi_{\text{new}})$ 是新策略下的**未归一化折扣状态访问频率**（discounted state visitation frequency，与 5.3.3 节定义一致）。由于 $\sum_s d^{\pi_{\text{new}}}(s) = \frac{1}{1-\gamma}$，它**不是**严格的概率分布，因此这里更严谨的写法是对状态做加权求和，而不是直接写成 $\mathbb{E}_{s\sim d^{\pi_{\text{new}}}}[\cdot]$。
 
 若引入归一化版本 $\bar d^{\pi_{\text{new}}}(s) = (1-\gamma)d^{\pi_{\text{new}}}(s)$，则也可等价写成：
 
