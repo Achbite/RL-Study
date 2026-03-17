@@ -3150,13 +3150,13 @@ $$
 \hat{A}_t^{\text{norm}} = \frac{\hat{A}_t - \text{mean}(\hat{A})}{\text{std}(\hat{A}) + \epsilon}
 $$
 
-> ⚠️ **计算域的两种主流做法**：优势归一化的计算域在工程实践中有两种常见方案：
+> ⚠️ **计算域的两种主流做法**：优势归一化的计算域在工程实践中有两种常见方案，**不同主流库的选择并不相同**：
 >
-> **方案 A：Rollout Buffer 级别归一化**——在整个 Buffer（如完整的 2048 步采集数据）上一次性计算所有 $\hat{A}_t$ 的均值和标准差，归一化后的值在后续 Mini-batch 训练中保持不变。优点是同一样本在不同 Mini-batch 中的优势值恒定，数学上更一致。
+> **方案 A：Rollout Buffer 级别归一化**——在整个 Buffer（如完整的 `n_steps × n_envs` 步采集数据）上一次性计算所有 $\hat{A}_t$ 的均值和标准差，归一化后的值在后续 Mini-batch 训练中保持不变。优点是同一样本在不同 Mini-batch 中的优势值恒定，数学上更一致。**Stable-Baselines3（SB3）的 PPO 实现采用此方案**——源码中在 `RolloutBuffer` 的 `compute_returns_and_advantage()` 阶段对整个 Buffer 的 advantages 做全局归一化，随后才切分为 Mini-batch 进入训练循环。SB3 甚至要求 `n_steps * n_envs > 1` 正是因为全局归一化需要有意义的统计量。
 >
-> **方案 B：Mini-batch 级别归一化**——在每个 Mini-batch（如 256 步）内部分别计算 $\text{mean}$ 和 $\text{std}$ 进行归一化。**这是目前主流高质量实现的实际选择**——CleanRL 和 Stable-Baselines3 的 PPO 参考实现均采用此方案（源码中在 `for rollout_data in buffer.get(batch_size)` 循环内对 `advantages` 做归一化）。虽然同一样本在不同 Mini-batch 中可能获得略有差异的归一化值，但在实践中这种微小差异并未导致性能下降，反而因为每个 Mini-batch 的梯度尺度更一致而表现稳定。
+> **方案 B：Mini-batch 级别归一化**——在每个 Mini-batch（如 256 步）内部分别计算 $\text{mean}$ 和 $\text{std}$ 进行归一化。**CleanRL 的 PPO 实现采用此方案**（在 mini-batch 循环内部对当前 batch 的 advantages 做归一化）。虽然同一样本在不同 Mini-batch 中可能获得略有差异的归一化值，但在实践中这种微小差异并未导致性能下降，反而因为每个 Mini-batch 的梯度尺度更一致而表现稳定。
 >
-> 两种方案都是合理的工程选择，应根据具体任务通过消融实验确定。
+> 两种方案都是合理的工程选择，应根据具体任务通过消融实验确定。选择哪种方案时，建议直接参考所使用框架的源码实现，而非假定所有主流库的做法相同。
 
 **作用**：不同 batch 的奖励量级可能差异很大（例如早期 Agent 全程坠落、后期 Agent 快速通关），归一化后策略梯度的尺度稳定在相近范围内，避免了因奖励量级波动导致的学习率"失效"。$\epsilon$ 是小常数（如 $10^{-8}$），防止标准差为零时的除零错误。
 
@@ -3429,7 +3429,7 @@ Hessian 是二阶偏导数组成的 $d \times d$ 对称矩阵。如果说梯度 
 > 1. **概率的含义改变**：离散空间中 $\pi_\theta(a|s)$ 是一个概率质量函数（PMF），取值在 $[0,1]$；连续空间中 $\pi_\theta(a|s)$ 是概率密度函数（PDF），取值可以**大于 1**（密度不是概率）。
 > 2. **PPO 概率比的计算**：5.4.3 节的 $r_t(\theta) = \pi_\theta(a_t|s_t) / \pi_{\theta_{\text{old}}}(a_t|s_t)$ 在连续空间下使用的是**正态分布的对数概率密度**：$\log\pi_\theta(a|s) = -\frac{1}{2}\left[\frac{(a - \mu_\theta(s))^2}{\sigma_\theta^2(s)} + \log(2\pi\sigma_\theta^2(s))\right]$，而**不是** Softmax 后的离散概率值。
 > 3. **网络输出层的差异**：离散空间使用 Softmax 输出动作概率分布；连续空间的策略网络输出**两组值**——均值 $\mu_\theta(s)$（通常最后一层无激活函数或用 Tanh 限制范围）和对数标准差 $\log\sigma_\theta(s)$（用对数参数化保证 $\sigma > 0$）。
-> 4. **熵的计算**：离散分布的熵 $H = -\sum_a \pi(a)\log\pi(a)$；连续高斯分布的熵有解析形式 $H = \frac{1}{2}\log(2\pi e \sigma^2)$。
+> 4. **熵的计算**：离散分布的熵 $H = -\sum_a \pi(a)\log\pi(a)$；**未经变换的**连续高斯分布的熵有解析形式 $H = \frac{1}{2}\log(2\pi e \sigma^2)$。**但请注意**：一旦对高斯分布施加了非线性变换（如下文第 5 点的 Tanh 压缩），变换后分布的熵**不再有解析形式**（Analytically Intractable）。此时 PPO 损失中的熵正则化项（Entropy Bonus）有两种工程替代方案：(a) 使用**负对数概率的样本平均** $\hat{H} \approx -\frac{1}{N}\sum_i \log\pi(a_i|s_i)$（其中 $\log\pi$ 已包含 Jacobian 修正）作为熵的无偏估计；(b) 直接对**未压缩前的高斯分布**施加解析熵正则化 $\frac{1}{2}\log(2\pi e \sigma^2)$ 作为近似替代。SAC 的原始实现采用方案 (a)，而许多 PPO 连续控制实现因为使用硬截断（clip）而非 Tanh，从而可以直接使用高斯解析熵。
 >
 > 如果工程需要从离散动作空间拓展到连续控制，上述差异意味着第 8.5 节的网络输出层、第 8.6 节的 ratio 计算和熵计算代码都需要对应修改。
 >
@@ -4638,13 +4638,16 @@ $$
 算法: GAE 计算（AIServer 端，每 32 帧或回合结束时执行）
 输入: history[0..T-1] — T 帧的 (r, V) 数据
       gamma = 0.99, lambda = 0.95
-      is_game_end — 是否为回合终止
+      is_terminated — 是否为真实终止（Agent 死亡、通关等）
+      is_truncated  — 是否为超时截断（达到环境最大步数限制）
 
-// 确定 bootstrap value
-if is_game_end:
-    value = 0.0          // 终止状态无未来收益
+// 确定 bootstrap value（三种情况）
+if is_terminated:
+    value = 0.0          // 真实终止：MDP 定义上没有未来收益
+elif is_truncated:
+    value = V(s_T)        // 超时截断：Agent 仍存活，必须 bootstrap
 else:
-    value = V(s_T)        // TMax 截断：用当前价值估计
+    value = V(s_T)        // TMax 截断：32 帧窗口到期，游戏仍在继续
 
 gae = 0.0
 
@@ -4667,10 +4670,19 @@ for i = T-1 downto 0:
     value = history[i].V
 ```
 
+> ⚠️ **Terminated vs Truncated——最容易写错的边界条件**：在标准 MDP 和现代环境 API（如 Gymnasium）中，回合结束（`done=True`）必须被严格拆分为两种物理含义完全不同的信号：
+>
+> - **Terminated（真实终止）**：Agent 死亡、通关、违规等导致 episode 自然结束。此时在 MDP 定义上不存在后续状态，`value = 0.0` 是唯一正确的设置。
+> - **Truncated（超时截断）**：Agent 仍然存活，但达到了环境设定的最大步数限制（Time Limit）。此时 MDP 并未真正终止——Agent 在数学上仍有未来预期收益。**如果此时错误地设 `value = 0.0`，价值函数会在接近时间上限时发生系统性低估，导致 Agent 学到"接近超时时放弃努力"的错误策略。**
+>
+> 在本项目的游戏 AI 场景中，`is_terminated` 对应角色坠落死亡或通关，`is_truncated` 对应某个 Agent 通关后其余 Agent 被强制结束的截断惩罚场景（见 8.3 节）。TMax=32 帧的分批截断是第三种情况，它始终需要 bootstrap。
+>
+> **Gymnasium API 对照**：`env.step(action)` 返回 `(obs, reward, terminated, truncated, info)`，其中 `terminated` 和 `truncated` 是两个独立的布尔值。旧版 Gym 的 `done = terminated or truncated` 合并了两者，这正是许多 RL 实现中截断偏差（Truncation Bias）Bug 的根源。
+
 **关键工程决策**：
 
 1. **TMax=32 帧的分批发送**：不等到回合结束才计算 GAE，而是每 32 帧就算一次发一批。这平衡了 GAE 的准确性（需要较长轨迹）和样本延迟（Learner 需要及时收到数据）。
-2. **Bootstrap Value 的两种情况**：回合结束时 $V(s_T)=0$（终止状态的定义——没有未来收益）；TMax 截断时用当前价值网络估计 $V(s_T)$（假设游戏还会继续）。如果截断时也设为 0，会低估"游戏仍在进行中"的状态的价值。
+2. **Bootstrap Value 的三种情况**：真实终止时 $V(s_T)=0$（MDP 定义——终止状态没有未来收益）；超时截断时用当前价值网络估计 $V(s_T)$（Agent 仍存活，MDP 未真正结束）；TMax 截断时同样用 $V(s_T)$ 进行 bootstrap（游戏仍在继续）。**关键区分**：只有真实终止（terminated）才设 $V=0$，超时截断（truncated）和 TMax 截断都必须 bootstrap，否则会引入系统性的价值低估偏差。
 3. **GAE 在 Actor 端计算**：奖励 $r_t$ 和价值估计 $V(s_t)$ 都在 Actor 端产生（奖励由 Actor 计算，$V(s_t)$ 由 Actor 端的 ONNX 推理得到），直接在本地计算 GAE 避免了跨进程传输中间数据。
 
 ## 8.5 网络架构的工程实现
@@ -4995,6 +5007,12 @@ class RolloutBuffer:
 | **用 NumPy 存储，取出时转 Tensor** | NumPy 数组的内存布局（C-contiguous）与 PyTorch Tensor 兼容，`torch.FloatTensor(np_array)` 零拷贝或极低成本转换 |
 | **reset() 只重置指针不释放内存** | 下一个训练周期直接覆盖写入，避免频繁的内存分配/释放（malloc/free）造成的碎片化和 GC 停顿 |
 | **mini-batch 随机打乱** | 时序数据天然有自相关性（相邻帧的状态高度相似），如果按顺序取 batch，梯度方差大、收敛慢。打乱后每个 batch 包含不同时段的样本，梯度更稳定 |
+
+> ⚠️ **序列模型不能使用单步级别的随机打乱**：上述 `np.random.shuffle(indices)` 将所有 transition **逐条独立打乱**，彻底打破了时间因果顺序。这**仅在策略网络满足马尔可夫假设（即无记忆的前馈网络，如 MLP / CNN）时在数学上合法**——因为每个 transition $(s_t, a_t, r_t, s_{t+1})$ 是自包含的，不依赖隐藏状态。
+>
+> 如果将策略网络替换为 **RNN / LSTM / Transformer** 等序列模型，这种单步 Shuffle 会**彻底摧毁 Hidden State 的时序依赖**——模型在第 $t$ 步的隐藏状态 $h_t$ 依赖于 $h_{t-1}$，但打乱后相邻样本来自完全不相关的时间点，$h_{t-1}$ 毫无意义。此时模型不仅无法收敛，还会学到完全错误的噪声模式。
+>
+> **序列模型的正确做法**：必须采用 **Trajectory Chunking（轨迹切块采样）**——将完整轨迹切成固定长度（如 16~64 步）的连续片段，以片段为单位打乱（保留片段内部的时间顺序），并在每个片段的起始处重置或传递隐藏状态。这在文献中通常称为 Truncated BPTT（Backpropagation Through Time）。本文档的 PPO 实现使用 MLP 策略网络，因此单步 Shuffle 完全合法。
 
 ### 8.7.2 On-Policy vs Off-Policy 的内存开销对比
 
