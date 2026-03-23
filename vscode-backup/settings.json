@@ -1,0 +1,100 @@
+{
+    "tabnine.experimentalAutoImports": true,
+    "editor.suggest.snippetsPreventQuickSuggestions": false,
+    "explorer.confirmDelete": false,
+    "terminal.integrated.profiles.windows": {
+        "PowerShell": {
+            "source": "PowerShell",
+            "icon": "terminal-powershell"
+        },
+        "Command Prompt": {
+            "path": [
+                "${env:windir}\\Sysnative\\cmd.exe",
+                "${env:windir}\\System32\\cmd.exe"
+            ],
+            "args": [],
+            "icon": "terminal-cmd"
+        },
+        "Git Bash": {
+            "source": "Git Bash"
+        },
+        "Windows PowerShell": {
+            "path": "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        }
+    },
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
+    "cmake.configureOnOpen": true,
+    "settingsSync.ignoredExtensions": [
+        "ms-vscode.cpptools"
+    ],
+    "cmake.showOptionsMovedNotification": false,
+    "settingsSync.ignoredSettings": [
+        "-C_Cpp.default.includePath"
+    ],
+    "remote.autoForwardPortsFallback": 0,
+    "editor.accessibilitySupport": "off",
+    "dotnetAcquisitionExtension.allowInvalidPaths": true,
+    "C_Cpp.errorSquiggles": "enabled",
+    "deepseek.lang": "cn",
+    "deepseek.temperature": "1.5",
+    "terminal.explorerKind": "external",
+    "terminal.integrated.confirmOnExit": "always",
+    "rust-analyzer.linkedProjects": [],
+    "terminal.integrated.env.windows": {
+        "PATH": "${env:PATH};C:\\Users\\27263\\.cargo\\bin"
+    },
+    "github.copilot.chat.localeOverride": "zh-CN",
+    "update.mode": "none",
+    "[lua]": {
+        "editor.defaultFormatter": "yinfei.luahelper"
+    },
+    "codingcopilot.enableCompletionLanguage": {
+        "scminput": false,
+        "cpp": true
+    },
+    "codingcopilot.floatShortcut": false,
+    "codingcopilot.enableCodelens": false,
+    "git.autofetch": true,
+    "vscode-office.editorTheme": "One Dark",
+    "github.copilot.nextEditSuggestions.enabled": true,
+    "workbench.colorTheme": "Visual Studio 2017 Dark - C++",
+    "editor.renderWhitespace": "none",
+    "git.confirmSync": false,
+    "git.enableSmartCommit": true,
+    "files.autoSave": "afterDelay",
+    "remote.SSH.remotePlatform": {
+        "kkkdiwang-any2.devcloud.woa.com": "linux"
+    },
+    "security.promptForRemoteFileProtocolHandling": false,
+    "terminal.integrated.scrollback": 10000,
+    "gongfeng.copilot.featureConfig": {
+        "chat": {
+            "autofix": false,
+            "autoweb": true,
+            "chattoask": true,
+            "newChatTab": true,
+            "todoListEnable": false,
+            "allowExternalFileAccess": true,
+            "backspaceDeleteReference": true,
+            "autoOpenDiffAfterEdit": true
+        },
+        "terminal": {
+            "autorun": true,
+            "whiteList": [],
+            "blackList": [
+                "kill",
+                "rm",
+                "chmod"
+            ],
+            "shellSelection": "ide-default"
+        }
+    },
+    "editor.aiStats.enabled": false,
+    "diffEditor.renderSideBySide": false,
+    "diffEditor.maxFileSize": 0,
+    "git.openDiffOnClick": false,
+    "protobuf.protoc.path": "/root/.vscode-server/data/User/globalStorage/drblury.protobuf-vsc/bin/protoc",
+    "protobuf.clangFormat.enabled": true,
+    "protobuf.clangFormat.path": "/usr/bin/clang-format",
+    "markdown-preview-enhanced.breakOnSingleNewLine": true
+}
